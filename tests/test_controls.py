@@ -3,6 +3,9 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import unittest
+from pathlib import Path
+import tempfile
+from unittest.mock import patch
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
@@ -119,6 +122,7 @@ class ControlTests(unittest.TestCase):
         self.panel.move(300, 370)
         self.open_panel()
         self.assertTrue(self.preview.rect().contains(self.panel.geometry()))
+
         header = self.panel.findChild(QFrame, "panelHeader")
         QTest.mousePress(header, Qt.LeftButton, pos=QPoint(55, 16))
         QTest.mouseMove(header, QPoint(-2000, -2000), delay=1)
@@ -131,6 +135,40 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(self.panel.geometry().bottomRight(), self.preview.rect().bottomRight())
         self.panel.collapse()
         self.assertTrue(self.preview.rect().contains(self.panel.geometry()))
+
+
+class TrayTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+        cls.app.setQuitOnLastWindowClosed(False)
+
+    def test_tray_created_before_host_and_pause_resume_save_exit(self):
+        from garden.window import PondWindow
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'state.json'
+            with patch('garden.window.QSystemTrayIcon.isSystemTrayAvailable', return_value=False):
+                window = PondWindow(path, preview=True)
+            try:
+                self.assertIsNotNone(window.tray)
+                window.pause_action.trigger()
+                self.assertFalse(window.running)
+                self.assertFalse(window.timer.isActive())
+                self.assertEqual(window.pause_action.text(), '继续动画')
+                window.pause_action.trigger()
+                self.assertTrue(window.running)
+                self.assertTrue(window.timer.isActive())
+                self.assertEqual(window.pause_action.text(), '暂停动画')
+                action = next(a for a in window.tray.contextMenu().actions() if a.text() == '保存并退出')
+                with patch.object(QApplication, 'quit') as quit_app:
+                    action.trigger()
+                quit_app.assert_called_once()
+                self.assertTrue(path.exists())
+                self.assertFalse(window.tray.isVisible())
+                self.assertTrue(window._shutting_down)
+            finally:
+                window.shutdown()
+                window.deleteLater()
 
 
 if __name__ == "__main__":

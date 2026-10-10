@@ -114,7 +114,7 @@ class LocalControl(QObject):
         if not socket.canReadLine():
             return
         command = bytes(socket.readLine()).strip()
-        callback = {b'quit': self._on_quit, b'show': self._on_show}.get(command)
+        callback = {b'quit': self._on_quit, b'show': self._on_show, b'ping': lambda: None}.get(command)
         socket.write(b'ok\n' if callback else b'error\n')
         socket.flush()
         socket.disconnectFromServer()

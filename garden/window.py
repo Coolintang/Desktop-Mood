@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 import math
+from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QElapsedTimer
 from PySide6.QtGui import QPainter, QRegion, QIcon, QPixmap, QColor, QActionGroup
 from PySide6.QtWidgets import QWidget, QApplication, QSystemTrayIcon, QMenu
@@ -98,7 +99,8 @@ class PondWindow(QWidget):
         self.note_save_timer.timeout.connect(self.save_state)
         self.note.changed.connect(self.note_changed)
         self.orb.notesRequested.connect(self.show_note)
-        self.chat_service = LanChat(self)
+        state_path = Path(state_path).expanduser().resolve()
+        self.chat_service = LanChat(self, history_path=state_path.with_name(state_path.stem + '.chat.json'))
         self.chat = ChatWidget(self.state.chat, self.note_bounds, self.chat_service, self if preview else None)
         self.chat.changed.connect(self.note_changed)
         self.chat.unreadChanged.connect(self.orb.set_chat_unread)
@@ -141,8 +143,8 @@ class PondWindow(QWidget):
         return round(1000 / self.state.preferences['fps'])
 
     def _create_tray(self):
-        if not QSystemTrayIcon.isSystemTrayAvailable():
-            return
+        # The panel may appear after us at login. Qt registers a visible icon
+        # when a tray host becomes available, so create it even that early.
         pixmap = QPixmap(32, 32)
         pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
@@ -327,6 +329,8 @@ class PondWindow(QWidget):
         self.orb.set_running(self.running)
         if self.tray:
             self.pause_action.setChecked(not self.running)
+            self.pause_action.setText('暂停动画' if self.running else '继续动画')
+            self.tray.setToolTip('春庭 · Haruniwa' if self.running else '春庭 · 已暂停')
         if self.running:
             self.elapsed.restart()
             self.timer.start(self.frame_interval())

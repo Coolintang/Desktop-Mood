@@ -28,8 +28,7 @@ class ChatWidget(NoteWidget):
         self.history = QPlainTextEdit()
         self.history.setReadOnly(True)
         self.history.setAccessibleName('局域网群聊记录')
-        self.history.setMaximumBlockCount(1000)
-        self.history.setPlaceholderText('同一局域网打开春庭即可加入。\n消息仅在本次运行中保留。')
+        self.history.setPlaceholderText('同一局域网打开春庭即可加入。\n自动保存并向在线庭友同步最近 200 条消息。')
         layout.insertWidget(2, self.history, 2)
         row = QHBoxLayout()
         self.reconnect_button = QPushButton('重连')
@@ -43,10 +42,12 @@ class ChatWidget(NoteWidget):
         layout.insertLayout(layout.count()-1, row)
         self.status.setWordWrap(True)
         self.status.setText(service.status)
-        self.status.setToolTip('同网段公开群聊，无账号或加密；在线设备可接收。消息不保证送达，无离线补发。')
-        service.messageReceived.connect(self.receive_message)
+        self.status.setToolTip('同网段公开群聊，无账号或加密；最近 200 条消息会保存在本机并共享给上线庭友。需要至少一位在线庭友保留记录才能补齐。')
+        service.messageReceived.connect(self._live_received)
+        service.historyChanged.connect(self.refresh_history)
         service.statusChanged.connect(self.status.setText)
         service.peersChanged.connect(self.set_members)
+        self.refresh_history()
         self.hide()  # Child widgets otherwise become visible when the preview opens.
 
     def reposition(self):
@@ -74,16 +75,33 @@ class ChatWidget(NoteWidget):
     def send_message(self):
         text = self.editor.toPlainText().strip()
         if self.service.send_message(text):
-            self._append('我 · '+self.service.name, text)
             self.editor.clear()
+
+    def refresh_history(self):
+        scroll = self.history.verticalScrollBar()
+        at_bottom = scroll.value() >= scroll.maximum()
+        position = scroll.value()
+        lines = []
+        for record in self.service.history:
+            name = ('我 · ' if record['sender'] == self.service.identity else '') + record['name']
+            stamp = datetime.fromtimestamp(record['sent_at']/1000).strftime('%m-%d %H:%M')
+            lines.append(f'{name}  {stamp}\n{record["text"]}\n')
+        self.history.setPlainText('\n'.join(lines))
+        scroll.setValue(scroll.maximum() if at_bottom else position)
 
     def _append(self, name, text):
         self.history.appendPlainText(f'{name}  {datetime.now():%H:%M}\n{text}\n')
 
     def receive_message(self, name, text):
+        # Also used by the isolated rendering/demo tools.
         if self._closing:
             return
         self._append(name, text)
+        self._live_received(name, text)
+
+    def _live_received(self, name, text):
+        if self._closing:
+            return
         if not self.isVisible() or self.isMinimized():
             self.unread += 1
             self.unreadChanged.emit(self.unread)
