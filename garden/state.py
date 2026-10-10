@@ -3,6 +3,7 @@ import json, time, os, tempfile, math
 from pathlib import Path
 from .models import AppState, Fish, Plant
 from .constants import *
+from .growth import advance_growth
 
 class StateStore:
     def __init__(self, path: str | Path):
@@ -27,6 +28,8 @@ class StateStore:
                     raise ValueError("状态文件包含无效数值")
             for entity in [*s.fish, *s.plants]:
                 for key, value in vars(entity).items():
+                    if key == 'growth_hours' and value is None:
+                        continue
                     if key != "kind" and (not isinstance(value, (int, float)) or not math.isfinite(value)):
                         raise ValueError("生物状态包含无效数值")
         except (OSError, ValueError, TypeError, KeyError) as exc:
@@ -38,12 +41,7 @@ class StateStore:
 
     def _settle_offline(self, s: AppState):
         now = time.time(); hours = min(OFFLINE_SETTLE_HOURS, max(0.0, (now-s.last_saved)/3600.0))
-        s.water_quality = max(0.0, s.water_quality - WATER_DECAY_PER_HOUR * hours)
-        for f in s.fish:
-            f.age_hours += hours; f.hunger = min(100.0, f.hunger + FISH_HUNGER_PER_HOUR*hours)
-            if f.hunger >= FISH_STARVE_THRESHOLD: f.health = max(0.0, f.health - 3.5*hours)
-        for p in s.plants:
-            p.age_hours += hours; p.moisture = max(0.0, p.moisture - 1.4*hours)
+        advance_growth(s, hours)
         s.last_saved = now
 
     def save(self, s: AppState) -> bool:

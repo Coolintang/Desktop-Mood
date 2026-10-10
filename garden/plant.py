@@ -10,6 +10,7 @@ from PySide6.QtGui import (
 )
 
 from .constants import PLANT_STAGE_HOURS
+from .growth import plant_growth, plant_phase, clamp
 
 
 def stage(age):
@@ -49,7 +50,7 @@ def paint_leaf(p: QPainter, center: QPointF, r: float, seed: int, alpha=255):
     p.save()
     p.translate(center)
     p.setOpacity(p.opacity()*max(0, min(255, alpha))/255)
-    path = _leaf_path(r, seed)
+    path = _leaf_path(round(r*20)/20, seed)
     shadow = QRadialGradient(QPointF(r*.06, r*.14), r*1.1)
     shadow.setColorAt(0, QColor(22, 95, 85, 38))
     shadow.setColorAt(1, QColor(22, 95, 85, 0))
@@ -136,24 +137,64 @@ def paint_lotus(p: QPainter, center: QPointF, r: float):
 
 
 def paint_plant(p, plant, center, scale, t):
-    st = stage(plant.age_hours)
-    r = (20+st*8)*scale
+    age = plant_growth(plant)
+    phase_name, progress = plant_phase(plant)
+    maturity = clamp(age/30)
+    r = (12+36*maturity**.72)*scale
     phase = plant.phase
     drift = QPointF(math.sin(t*.38+phase)*1.3*scale,
                     math.cos(t*.31+phase)*.8*scale)
     p.save()
     p.translate(center+drift)
-    p.rotate(math.sin(t*.24+phase)*2.2)
+    p.rotate(math.sin(t*.24+phase)*2.2+(1-plant.health/100)*12)
+    p.setOpacity(p.opacity()*(.45+.55*clamp(plant.health/100)))
     origin = QPointF(0, 0)
     p.setBrush(Qt.NoBrush)
     p.setPen(QPen(QColor(225, 255, 244, 40), .8))
     p.drawEllipse(origin, r*1.14, r*.98)
-    # Small pads sit behind the main leaf, preserving a calm, legible cluster.
-    if st >= 1:
-        paint_leaf(p, QPointF(-r*.79, r*.46), r*.49, plant.id+1)
-    if st >= 2:
-        paint_leaf(p, QPointF(r*.73, -r*.41), r*.40, plant.id+2)
+    if age >= 6:
+        paint_leaf(p, QPointF(-r*.79, r*.46), r*.49*clamp((age-6)/6), plant.id+1)
+    if age >= 18:
+        paint_leaf(p, QPointF(r*.73, -r*.41), r*.40*clamp((age-18)/6), plant.id+2)
     paint_leaf(p, origin, r, plant.id)
-    if st >= 3:
-        paint_lotus(p, QPointF(r*.03, -r*.10), r*.65)
+    if plant.health < 50:
+        p.save()
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(152, 126, 68, int((50-plant.health)*1.7)))
+        p.drawPath(_leaf_path(round(r*20)/20, plant.id))
+        p.restore()
+    flower_center = QPointF(r*.03, -r*.10)
+    if phase_name == '孕蕾':
+        p.save()
+        p.translate(flower_center)
+        bud = r*(.13+.18*progress)
+        shape = QPainterPath(QPointF(0, -bud*1.5))
+        shape.cubicTo(-bud, -bud*.3, -bud, bud, 0, bud)
+        shape.cubicTo(bud, bud, bud, -bud*.3, 0, -bud*1.5)
+        gradient = QLinearGradient(0, -bud, 0, bud)
+        gradient.setColorAt(0, QColor('#F9D2DF'))
+        gradient.setColorAt(1, QColor('#80AB76'))
+        p.setBrush(gradient)
+        p.setPen(QPen(QColor('#B88C9C'), .6))
+        p.drawPath(shape)
+        p.setPen(QPen(QColor('#FFE5E7'), .7))
+        p.drawLine(QPointF(0, -bud), QPointF(bud*.1, bud*.5))
+        p.restore()
+    elif phase_name == '盛放':
+        openness = .7+.3*clamp(progress*6)
+        paint_lotus(p, flower_center, r*.65*openness)
+    elif phase_name == '凋谢':
+        p.save()
+        p.setOpacity(p.opacity()*(1-progress)*.8)
+        paint_lotus(p, flower_center, r*.65*(1-.2*progress))
+        p.restore()
+    if phase_name in ('凋谢', '休眠'):
+        p.setPen(QPen(QColor('#8A9567'), .7))
+        p.setBrush(QColor('#ABB684'))
+        p.drawEllipse(flower_center, r*.13, r*.10)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor('#6D845D'))
+        for i in range(5):
+            angle = i*math.tau/5
+            p.drawEllipse(flower_center+QPointF(math.cos(angle)*r*.07, math.sin(angle)*r*.05), r*.018, r*.018)
     p.restore()

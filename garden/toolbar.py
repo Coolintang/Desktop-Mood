@@ -263,6 +263,8 @@ class FloatingOrb(QWidget):
     runningChanged = Signal(bool)
     exitRequested = Signal()
     settingChanged = Signal(str, object)
+    notesRequested = Signal()
+    chatRequested = Signal()
 
     ITEMS = [
         (Tool.FEED, "feed", "投喂"),
@@ -314,6 +316,8 @@ class FloatingOrb(QWidget):
         self.addAction(self.exit_action)
         self._exit_menu = QMenu(self)
         self._exit_menu.addAction("展开照料面板", self.expand)
+        self._exit_menu.addAction("打开便签", self.notesRequested.emit)
+        self._exit_menu.addAction("庭友群聊", self.chatRequested.emit)
         self._exit_menu.addSeparator()
         self._exit_menu.addAction(self.exit_action)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -327,9 +331,29 @@ class FloatingOrb(QWidget):
         self._panel = self._build_panel()
         self._stack.addWidget(self._panel)
         self._stack.setCurrentWidget(self._capsule)
+        self.chat_badge = QPushButton(self)
+        self.chat_badge.setObjectName('chatUnreadBadge')
+        self.chat_badge.setFixedSize(34, 26)
+        self.chat_badge.setStyleSheet('QPushButton { background: #BC6D6B; color: white; border: 2px solid #FCF6DE; border-radius: 12px; font-weight: bold; }')
+        self.chat_badge.clicked.connect(self.chatRequested.emit)
+        self.chat_badge.hide()
         self.setFixedSize(202, 70)
         self.set_preferences(self.DEFAULTS)
         self.set_context(0, 0, 100, "sunny")
+
+    def set_chat_unread(self, count):
+        self.chat_badge.setText(str(count) if count < 100 else '99+')
+        self.chat_badge.setToolTip(f'庭友群聊有 {count} 条未读消息，点击打开')
+        self.chat_badge.setAccessibleName(f'{count} 条未读群聊消息')
+        self.chat_badge.setVisible(count > 0)
+        self.chat_badge.raise_()
+        self.chat_button.setText(f'庭友群聊  ·  {count} 条未读' if count else '庭友群聊  ·  局域网自动加入')
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'chat_badge'):
+            self.chat_badge.move(self.width()-40, 2)
+            self.chat_badge.raise_()
 
     @staticmethod
     def _stylesheet():
@@ -462,6 +486,10 @@ class FloatingOrb(QWidget):
         self._water_bar.setTextVisible(False)
         self._water_bar.setAccessibleName("池塘水质")
         stats_layout.addWidget(self._water_bar)
+        self._growth_status = self._label('成长中的鱼 0 尾  ·  盛放的花 0 株', 'muted')
+        self._growth_status.setWordWrap(True)
+        self._growth_status.setToolTip('悬停查看每尾鱼和每株花的生长与养护状态')
+        stats_layout.addWidget(self._growth_status)
         body_layout.addWidget(stats)
 
         tool_section = QVBoxLayout()
@@ -501,6 +529,17 @@ class FloatingOrb(QWidget):
         help_layout.addWidget(self._description, 1)
         tool_section.addWidget(help_card)
         body_layout.addLayout(tool_section)
+        notes_button = QPushButton('庭间便签  ·  记录 / 隐藏 / 固定')
+        notes_button.setObjectName('notesButton')
+        notes_button.setMinimumHeight(34)
+        notes_button.setToolTip('打开自动保存的便签，可隐藏或固定显示')
+        notes_button.clicked.connect(self.notesRequested.emit)
+        body_layout.addWidget(notes_button)
+        self.chat_button = QPushButton('庭友群聊  ·  局域网自动加入')
+        self.chat_button.setObjectName('chatButton')
+        self.chat_button.setMinimumHeight(34)
+        self.chat_button.clicked.connect(self.chatRequested.emit)
+        body_layout.addWidget(self.chat_button)
 
         settings = QVBoxLayout()
         settings.setSpacing(8)
@@ -713,6 +752,12 @@ class FloatingOrb(QWidget):
         self._water_bar.setValue(quality)
         self._water_bar.setAccessibleDescription(f"水质百分之 {quality}")
         self._weather_badge.setText({"sunny": "晴空", "cloudy": "薄云", "rain": "细雨", "snow": "初雪", "auto": "自然变化"}.get(weather, weather))
+
+    def set_growth_context(self, summary, details):
+        if self._growth_status.text() != summary:
+            self._growth_status.setText(summary)
+        if self._growth_status.toolTip() != details:
+            self._growth_status.setToolTip(details)
 
     def show_feedback(self, message: str):
         if self._closing_for_shutdown:

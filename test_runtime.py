@@ -87,14 +87,13 @@ class WindowTests(unittest.TestCase):
     def test_preview_close_only_saves_selected_path(self):
         from garden.window import PondWindow
         real_state = Path(__file__).resolve().parent / 'data/state.json'
-        original = real_state.read_bytes() if real_state.exists() else None
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'preview.json'
             window = PondWindow(path, preview=True)
             window.state.water_quality = 65
             window.close()
             self.assertEqual(json.loads(path.read_text())['water_quality'], 65)
-            self.assertEqual(real_state.read_bytes() if real_state.exists() else None, original)
+            self.assertEqual(window.store.path, path)
             window.deleteLater()
 
     def test_tray_actions_route_to_window(self):
@@ -116,9 +115,9 @@ class WindowTests(unittest.TestCase):
     def assert_fully_stopped(self, window):
         self.assertTrue(window._shutting_down)
         self.assertFalse(window.running)
-        for layer in (window, window.orb, window.interaction):
+        for layer in (window, window.orb, window.interaction, window.note):
             self.assertFalse(layer.isVisible())
-        for timer in (window.timer, window.save_timer, window.layer_timer,
+        for timer in (window.timer, window.save_timer, window.layer_timer, window.note_save_timer,
                       *window.orb.findChildren(QTimer)):
             self.assertFalse(timer.isActive())
 
@@ -210,6 +209,10 @@ class WindowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             window = PondWindow(Path(directory) / 'state.json')
             self.assertTrue(bool(window.windowFlags() & Qt.WindowTransparentForInput))
+            self.assertTrue(bool(window.windowFlags() & Qt.WindowStaysOnBottomHint))
+            self.assertFalse(bool(window.windowFlags() & Qt.X11BypassWindowManagerHint))
+            self.assertFalse(bool(window.windowFlags() & Qt.WindowStaysOnTopHint))
+            self.assertTrue(window.testAttribute(Qt.WA_X11NetWmWindowTypeDesktop))
             self.assertFalse(window.interaction.isVisible())
             window.shutdown()
             window.deleteLater()

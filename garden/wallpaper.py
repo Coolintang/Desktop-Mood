@@ -1,6 +1,6 @@
 """Resolution-independent, locally drawn spring garden artwork.
 
-The expensive garden illustration is cached. Only petals, light and the clock
+The expensive garden illustration is cached. Only moving scenery, petals, light and the clock
 are drawn on each frame, so a wallpaper doesn't need to redraw every blossom.
 """
 from __future__ import annotations
@@ -136,6 +136,15 @@ class GardenWallpaper:
         grass.setColorAt(.35, QColor('#D1DDB2'))
         grass.setColorAt(1, QColor('#94B78E'))
         p.fillPath(field, grass)
+
+        # Narrow terraced fields settle the tea house into a rural landscape.
+        for i in range(5):
+            y = 443+i*10
+            _curve(p, (490-i*22, y), [(665, y-16, 878, y-14, 1157+i*9, y+2)],
+                        '#A1B98A' if i%2 else '#DBDFB2', 3)
+        for i in range(12):
+            x = 780+i*31
+            _curve(p, (x, 449), [(x-7, 462, x-20, 475, x-30, 489)], '#9EB78A', 1)
 
         # Meandering sand path and stepping stones towards the water.
         path = QPainterPath(QPointF(-30, 792))

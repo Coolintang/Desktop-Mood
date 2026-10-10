@@ -30,7 +30,6 @@ class AppControlTests(unittest.TestCase):
         self.children = []
         self.env = {**os.environ, 'QT_QPA_PLATFORM': 'offscreen'}
         self.real_state = ROOT / 'data/state.json'
-        self.original = self.real_state.read_bytes() if self.real_state.exists() else None
 
     def tearDown(self):
         for child in self.children:
@@ -43,7 +42,8 @@ class AppControlTests(unittest.TestCase):
                     child.communicate(timeout=5)
             else:
                 child.communicate()
-        self.assertEqual(self.real_state.read_bytes() if self.real_state.exists() else None, self.original)
+        # A real running garden may auto-save concurrently; all test children
+        # receive an explicit temporary --state rather than snapshotting it.
         self.directory.cleanup()
 
     def launch(self, paused=False):

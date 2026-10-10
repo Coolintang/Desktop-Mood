@@ -9,6 +9,11 @@ from .models import normalize_preferences
 from .state import StateStore
 from .scene import PondScene
 from .toolbar import FloatingOrb
+from .desktop import DesktopLayer
+from .notes import NoteWidget
+from .lan_chat import LanChat
+from .chat_widget import ChatWidget
+from .growth import growth_summary
 
 
 class InteractionWindow(QWidget):
@@ -34,6 +39,7 @@ class InteractionWindow(QWidget):
 
     def mouseMoveEvent(self, event):
         self.owner.scene.hover = (event.position().x(), event.position().y())
+        self.setToolTip(self.owner.scene.describe_at(event.position().x(), event.position().y(), self.width(), self.height()))
         self.owner.update()
 
     def leaveEvent(self, event):
@@ -69,12 +75,13 @@ class PondWindow(QWidget):
         self.running = True
         self.setWindowTitle("春庭 · Haruniwa")
         self.setMinimumSize(640, 420)
+        self.desktop_layer = None if preview else DesktopLayer()
         if not preview:
             self.setAttribute(Qt.WA_TranslucentBackground)
             self.setAttribute(Qt.WA_TransparentForMouseEvents)
             self.setAttribute(Qt.WA_ShowWithoutActivating)
-            self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnBottomHint |
-                                Qt.WindowDoesNotAcceptFocus | Qt.WindowTransparentForInput)
+            self.setAttribute(Qt.WA_X11NetWmWindowTypeDesktop)
+            self.setWindowFlags(self.desktop_layer.flags())
         self.interaction = InteractionWindow(self)
         self.orb = FloatingOrb()
         if preview:
@@ -84,6 +91,22 @@ class PondWindow(QWidget):
         self.orb.exitRequested.connect(self.request_exit)
         self.orb.settingChanged.connect(self.set_preference)
         self.orb.set_preferences(self.state.preferences)
+        self.note = NoteWidget(self.state.note, self.note_bounds, self if preview else None)
+        self.note_save_timer = QTimer(self)
+        self.note_save_timer.setSingleShot(True)
+        self.note_save_timer.setInterval(600)
+        self.note_save_timer.timeout.connect(self.save_state)
+        self.note.changed.connect(self.note_changed)
+        self.orb.notesRequested.connect(self.show_note)
+        self.chat_service = LanChat(self)
+        self.chat = ChatWidget(self.state.chat, self.note_bounds, self.chat_service, self if preview else None)
+        self.chat.changed.connect(self.note_changed)
+        self.chat.unreadChanged.connect(self.orb.set_chat_unread)
+        self.orb.chatRequested.connect(self.show_chat)
+        # Rendering and headless tests must not announce themselves on the LAN.
+        if QApplication.platformName() not in ('offscreen', 'minimal'):
+            if self.chat_service.start():
+                self.chat.set_members(1)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
         self.elapsed = QElapsedTimer()
@@ -138,6 +161,8 @@ class PondWindow(QWidget):
         self.tray.setToolTip("春庭 · Haruniwa")
         menu = QMenu(self)
         menu.addAction("显示控制面板", self.show_controls)
+        menu.addAction("打开便签", self.show_note)
+        menu.addAction("庭友群聊", self.show_chat)
         self.pause_action = menu.addAction("暂停动画")
         self.pause_action.setCheckable(True)
         self.pause_action.triggered.connect(lambda paused: self.set_running(not paused))
@@ -183,6 +208,9 @@ class PondWindow(QWidget):
         else:
             self.setGeometry(screen.geometry())
         self.position_controls()
+        self.note.reposition()
+        if hasattr(self, 'chat'):
+            self.chat.reposition()
         if self.tool != Tool.NONE and not self.preview:
             self.interaction.activate_for_tool()
 
@@ -190,6 +218,9 @@ class PondWindow(QWidget):
         if not self.preview:
             self.setGeometry(self._screen.geometry())
         self.position_controls()
+        self.note.reposition()
+        if hasattr(self, 'chat'):
+            self.chat.reposition()
         if self.tool != Tool.NONE and not self.preview:
             self.interaction.activate_for_tool()
 
@@ -208,6 +239,24 @@ class PondWindow(QWidget):
         self.orb.move(max(bounds.left(), bounds.right() - self.orb.width() - 24),
                       max(bounds.top(), bounds.bottom() - self.orb.height() - 24))
 
+    def note_bounds(self):
+        if self.preview:
+            return self.rect()
+        screen = self._screen or QApplication.primaryScreen()
+        return screen.availableGeometry()
+
+    def show_chat(self):
+        if not self._shutting_down:
+            self.chat.show_note()
+
+    def show_note(self):
+        if not self._shutting_down:
+            self.note.show_note()
+
+    def note_changed(self):
+        if not self._shutting_down:
+            self.note_save_timer.start()
+
     def show_controls(self):
         if self._shutting_down:
             return
@@ -223,14 +272,19 @@ class PondWindow(QWidget):
         if self._shutting_down:
             return
         self.show()
-        if not self.preview:
-            self.lower()
+        if self.desktop_layer:
+            self.desktop_layer.lower(self)
         self.orb.show_wallpaper_level()
+        if self.state.note.visible:
+            self.note.show_note(focus=False)
+        if self.state.chat.visible:
+            self.chat.show_note(focus=False)
 
     def _maintain_wallpaper_layer(self):
         if self._shutting_down:
             return
-        self.lower()
+        if self.desktop_layer:
+            self.desktop_layer.lower(self)
         if self.interaction.isVisible():
             self.interaction.lower()
 
@@ -285,6 +339,7 @@ class PondWindow(QWidget):
         weather = self.state.preferences['weather_mode']
         self.orb.set_context(len(self.state.fish), len(self.state.plants), self.state.water_quality,
                              self.state.weather if weather == 'auto' else weather)
+        self.orb.set_growth_context(*growth_summary(self.state))
 
     def tick(self):
         if not self.running:
@@ -309,6 +364,7 @@ class PondWindow(QWidget):
     def mouseMoveEvent(self, event):
         if self.preview:
             self.scene.hover = (event.position().x(), event.position().y())
+            self.setToolTip(self.scene.describe_at(event.position().x(), event.position().y(), self.width(), self.height()))
             self.update()
         super().mouseMoveEvent(event)
 
@@ -337,6 +393,10 @@ class PondWindow(QWidget):
         super().resizeEvent(event)
         if self.preview:
             self.position_controls()
+            if hasattr(self, 'note'):
+                self.note.reposition()
+            if hasattr(self, 'chat'):
+                self.chat.reposition()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -349,6 +409,7 @@ class PondWindow(QWidget):
         if not ok:
             logging.warning("Could not save pond state: %s", self.store.last_error)
             self.orb.show_feedback("保存失败，原存档已保留；请检查文件权限或磁盘空间")
+        self.note.set_save_status(ok)
         return ok
 
     def shutdown(self):
@@ -361,6 +422,8 @@ class PondWindow(QWidget):
         self.timer.stop()
         self.save_timer.stop()
         self.layer_timer.stop()
+        self.note_save_timer.stop()
+        self.chat_service.close()
         try:
             self.save_state()
         except Exception:
@@ -370,7 +433,11 @@ class PondWindow(QWidget):
         finally:
             self.interaction.close()
             self.orb.close_for_shutdown()
+            self.note.close_for_shutdown()
+            self.chat.close_for_shutdown()
             self.hide()
+            if self.desktop_layer:
+                self.desktop_layer.close()
             if self.tray:
                 self.tray.hide()
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Any
-import random, time
+import random, time, math
 
 @dataclass
 class Fish:
@@ -14,6 +14,7 @@ class Fish:
     hunger: float = 20.0
     health: float = 100.0
     age_hours: float = 0.0
+    growth_hours: float | None = None
     phase: float = field(default_factory=lambda: random.random() * 6.283)
     id: int = field(default_factory=lambda: random.randrange(1, 2**31))
 
@@ -23,6 +24,8 @@ class Plant:
     y: float
     age_hours: float = 0.0
     moisture: float = 80.0
+    growth_hours: float | None = None
+    health: float = 100.0
     phase: float = field(default_factory=lambda: random.random() * 6.283)
     id: int = field(default_factory=lambda: random.randrange(1, 2**31))
 
@@ -83,6 +86,27 @@ def normalize_preferences(value):
 
 
 @dataclass
+class NoteState:
+    text: str = ''
+    visible: bool = False
+    pinned: bool = False
+    x: float = .78
+    y: float = .12
+
+    @classmethod
+    def from_dict(cls, value):
+        if not isinstance(value, dict):
+            return cls()
+        if not isinstance(value.get('text', ''), str):
+            raise ValueError('便签内容必须为文本')
+        def position(key, default):
+            v = value.get(key, default)
+            return max(0.0, min(1.0, v)) if isinstance(v, (int, float)) and math.isfinite(v) else default
+        return cls(text=value.get('text', ''), visible=value.get('visible') is True,
+                   pinned=value.get('pinned') is True, x=position('x', .78), y=position('y', .12))
+
+
+@dataclass
 class AppState:
     fish: list[Fish] = field(default_factory=list)
     plants: list[Plant] = field(default_factory=list)
@@ -91,6 +115,8 @@ class AppState:
     weather: str = "sunny"
     weather_until: float = 0.0
 
+    note: NoteState = field(default_factory=NoteState)
+    chat: NoteState = field(default_factory=lambda: NoteState(x=.15, y=.2))
     preferences: dict = field(default_factory=lambda: DEFAULT_PREFERENCES.copy())
 
     def to_dict(self) -> dict[str, Any]:
@@ -102,6 +128,8 @@ class AppState:
             "weather": self.weather,
             "weather_until": self.weather_until,
             "preferences": normalize_preferences(self.preferences),
+            "note": asdict(self.note),
+            "chat": asdict(self.chat),
         }
 
     @classmethod
@@ -123,4 +151,6 @@ class AppState:
             weather=str(d.get("weather", "sunny")),
             weather_until=float(d.get("weather_until", 0.0)),
             preferences=normalize_preferences(d.get("preferences")),
+            note=NoteState.from_dict(d.get('note')),
+            chat=NoteState.from_dict(d.get('chat', {'x': .15, 'y': .2})),
         )

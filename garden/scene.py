@@ -11,6 +11,8 @@ from .plant import paint_plant
 from .daylight import daylight
 from .weather import update_weather, LIGHT
 from .wallpaper import GardenWallpaper
+from .pastoral import paint_rocks, paint_watergrass, paint_stream, paint_waterwheel, paint_reeds
+from .growth import advance_growth, describe_fish, describe_plant
 
 
 class PondScene:
@@ -80,17 +82,11 @@ class PondScene:
     def update(self, dt):
         dt = max(0.0, min(float(dt), .25))
         self.t += dt
-        hours = dt / 3600
-        self.state.water_quality = max(0, self.state.water_quality - WATER_DECAY_PER_HOUR*hours)
-        for fish in self.state.fish:
-            fish.hunger = min(100, fish.hunger + FISH_HUNGER_PER_HOUR*hours)
-        for plant in self.state.plants:
-            plant.age_hours += hours
-            plant.moisture = max(0, plant.moisture - 1.4*hours)
+        advance_growth(self.state, dt/3600)
         update_weather(self.state)
         rect = self.pond_rect(*self._viewport)
         update_fish(self.state.fish, self.food, dt,
-                    pond_size=(rect.width(), rect.height()), render_scale=self.entity_scale(rect)*.85)
+                    pond_size=(rect.width(), rect.height()), render_scale=self.entity_scale(rect)*.85, advance_age=False)
         for x in self.food:
             x.life -= dt
         self.food = [x for x in self.food if x.life > 0 and not x.eaten]
@@ -150,11 +146,11 @@ class PondScene:
                 nx, ny = .5+(nx-.5)*.40/d, .5+(ny-.5)*.40/d
             if tool == Tool.ADD_FISH:
                 self.state.fish.append(Fish(nx, ny, random.choice(FISH_KINDS),
-                                           angle=random.random()*math.tau, size=random.uniform(.72, 1.08)))
-                message = '一尾新鱼，游进了春庭'
+                                           angle=random.random()*math.tau, size=random.uniform(.85, 1.08), growth_hours=0))
+                message = '幼鱼入住了，规律投喂与清水会帮助它长大'
             else:
-                self.state.plants.append(Plant(nx, ny, age_hours=6))
-                message = '种下一片新绿，让它慢慢长大'
+                self.state.plants.append(Plant(nx, ny, age_hours=0, growth_hours=0))
+                message = '种下新芽，浇水后会展叶、孕蕾、开花'
             self.ripples.append(Ripple(nx, ny, max_radius=65))
             return message
         if tool == Tool.ERASE:
@@ -172,6 +168,17 @@ class PondScene:
                 self.state.plants.remove(nearest)
             return '留一点空白，让庭院自在呼吸'
         return None
+
+    def describe_at(self, x, y, w, h):
+        nearest, distance = None, max(24, self.pond_rect(w, h).width()*.04)
+        for obj in [*self.state.fish, *self.state.plants]:
+            point = self.point(obj.x, obj.y, w, h)
+            d = math.hypot(x-point.x(), y-point.y())
+            if d < distance:
+                nearest, distance = obj, d
+        if nearest is None:
+            return ''
+        return describe_fish(nearest) if isinstance(nearest, Fish) else describe_plant(nearest)
 
     def _pond_path(self, r):
         cx, cy = r.center().x(), r.center().y()
@@ -307,7 +314,7 @@ class PondScene:
 
     def _paint_cached_shore(self, p, path, rect, w, h):
         dpr = p.device().devicePixelRatioF()
-        key = (w, h, dpr, self.illustrated, self._daylight['name'] == 'night')
+        key = (w, h, dpr, self.illustrated, self._daylight['name'] == 'night', self._scenery_weather)
         if key != self._shore_cache_key:
             self._shore_cache = QImage(round(w*dpr), round(h*dpr), QImage.Format_ARGB32_Premultiplied)
             self._shore_cache.setDevicePixelRatio(dpr)
@@ -315,6 +322,13 @@ class PondScene:
             painter = QPainter(self._shore_cache)
             painter.setRenderHint(QPainter.Antialiasing)
             self._paint_anime_shore(painter, path, rect)
+            painter.end()
+            self._rocks_cache = QImage(round(w*dpr), round(h*dpr), QImage.Format_ARGB32_Premultiplied)
+            self._rocks_cache.setDevicePixelRatio(dpr)
+            self._rocks_cache.fill(Qt.transparent)
+            painter = QPainter(self._rocks_cache)
+            painter.setRenderHint(QPainter.Antialiasing)
+            paint_rocks(painter, rect, self._daylight['name'] == 'night', self._scenery_weather)
             painter.end()
             self._shore_cache_key = key
         p.drawImage(0, 0, self._shore_cache)
@@ -386,10 +400,13 @@ class PondScene:
         path = self._pond_path(r)
         dl, weather = self.environment(override_hour, override_weather)
         self._daylight = dl
+        self._scenery_weather = weather
         if self.illustrated:
             self.wallpaper.paint_background(p, w, h, dl, weather)
         self._paint_cached_shore(p, path, r, w, h)
         light = LIGHT[weather]
+        if self.illustrated:
+            paint_stream(p, r, self.t, dl['name'] == 'night', weather)
 
         p.save()
         p.setClipPath(path)
@@ -406,6 +423,7 @@ class PondScene:
             rg.setColorAt(0,QColor(248,252,247,18)); rg.setColorAt(.58,QColor(229,246,248,9)); rg.setColorAt(1,QColor(255,255,255,0))
             p.setBrush(rg); p.drawEllipse(QPointF(cx,cy),150,42)
 
+        paint_watergrass(p, r, self.t, dl['name'] == 'night')
         scale = self.entity_scale(r)
         # Fish swim under floating leaves.
         for f in self.state.fish:
@@ -465,6 +483,10 @@ class PondScene:
         # final glass reflection is above the ecosystem but kept very subtle
         self._paint_glass_finish(p, path, r)
         p.restore()
+        if self.illustrated:
+            paint_waterwheel(p, r, self.t, dl['name'] == 'night', weather)
+        p.drawImage(0, 0, self._rocks_cache)
+        paint_reeds(p, r, self.t, dl['name'] == 'night', weather)
         if self.illustrated and dl['name'] == 'night':
             self.wallpaper.paint_fireflies(p, w, h, self.t)
         if self.preferences.get('petals', True):

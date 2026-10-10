@@ -1,6 +1,7 @@
 from __future__ import annotations
 import math
 from pathlib import Path
+from .growth import fish_size
 from functools import lru_cache
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
@@ -54,7 +55,7 @@ def paint_fish(p:QPainter, fish, center:QPointF, scale:float, t:float, aspect:fl
 
     # The old 78 px fish was too small to retain the approved illustration detail.
     # 132 px nominal length keeps scales/fins readable on a 1600x900 desktop.
-    L=132.0*fish.size*scale
+    L=132.0*fish_size(fish)*scale
     # Positions live in a normalized ellipse. Correct the illustrated heading
     # for its on-screen aspect so a diagonal fish actually follows its nose.
     heading=math.atan2(math.sin(fish.angle), math.cos(fish.angle)*max(.01,aspect))
@@ -73,7 +74,7 @@ def paint_fish(p:QPainter, fish, center:QPointF, scale:float, t:float, aspect:fl
 
     # Fallback vector renderer if assets are missing. It still bends the rear body
     # and swings the tail around the peduncle, unlike the original static body.
-    H=42*fish.size*scale
+    H=42*fish_size(fish)*scale
     _paint_shadow(p,L,H,phase)
     base,light,accent=COLORS.get(fish.kind,COLORS['koi'])
     sway=math.sin(phase)
@@ -103,7 +104,7 @@ def _swim_bounds(fish, pond_size, render_scale):
     if pond_size is None:
         return SWIM_RADIUS, SWIM_RADIUS
     width, height = pond_size
-    padding = 132*fish.size*render_scale*.5+3
+    padding = 132*fish_size(fish)*render_scale*.5+3
     return (max(.02, min(SWIM_RADIUS, .5-padding/width)),
             max(.02, min(SWIM_RADIUS, .5-padding/height)))
 
@@ -180,7 +181,7 @@ def _food_target(fish, food, bounds, pond_size, render_scale):
         heading_x, heading_y = math.cos(fish.angle)*width, math.sin(fish.angle)*height
         heading_length = math.hypot(heading_x, heading_y)
         facing = (dx*heading_x+dy*heading_y)/max(1e-9, distance*heading_length)
-        can_eat = distance <= 132*fish.size*render_scale*.5+4 and facing > .35
+        can_eat = distance <= 132*fish_size(fish)*render_scale*.5+4 and facing > .35
         can_eat = can_eat or distance < 5
         # The extra .43 center cap intentionally reserves quiet water along the
         # shore. A tiny fish cannot physically bridge that whole margin on a
@@ -195,7 +196,7 @@ def _food_target(fish, food, bounds, pond_size, render_scale):
     return _reachable_food_point(target.x, target.y, *bounds, width, height)
 
 
-def update_fish(fish_list, food, dt, pond_size=None, render_scale=1.0):
+def update_fish(fish_list, food, dt, pond_size=None, render_scale=1.0, advance_age=True):
     """Advance relaxed swimming, with seconds-based steering and ellipse bounds."""
     if dt <= 0 or not math.isfinite(dt):
         return
@@ -216,7 +217,7 @@ def update_fish(fish_list, food, dt, pond_size=None, render_scale=1.0):
                       sum(f.y for f in neons)/len(neons))
         for f, bounds in zip(fish_list, bounds_by_fish):
             target = _food_target(f, food, bounds, pond_size, render_scale)
-            speed = f.speed*(1.3 if target else .8)
+            speed = f.speed*(1.3 if target else .8)*(.45+.55*max(0, min(1, f.health/100)))
             if target:
                 desired = math.atan2(target[1]-f.y, target[0]-f.x)
             else:
@@ -243,4 +244,5 @@ def update_fish(fish_list, food, dt, pond_size=None, render_scale=1.0):
             f.x += math.cos(f.angle)*speed*step
             f.y += math.sin(f.angle)*speed*step
             _confine(f, bounds)
-            f.age_hours += step/3600
+            if advance_age:
+                f.age_hours += step/3600
